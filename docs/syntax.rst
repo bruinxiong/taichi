@@ -1,87 +1,261 @@
-Syntax
-==========================
+.. _syntax:
+
+Kernels and functions
+=====================
+
+Taichi-scope vs Python-scope
+----------------------------
+
+Code decorated by ``@ti.kernel`` or ``@ti.func`` is in the **Taichi-scope**.
+
+They are to be compiled and executed on CPU or GPU devices with high
+parallelization performance, on the cost of less flexibility.
+
+.. note::
+
+    For people from CUDA, Taichi-scope = **device** side.
+
+
+Code outside ``@ti.kernel`` or ``@ti.func`` is in the **Python-scope**.
+
+They are not compiled by the Taichi compiler and have lower performance
+but with a richer type system and better flexibility.
+
+.. note::
+
+    For people from CUDA, Python-scope = **host** side.
+
 
 Kernels
----------------------
+-------
 
-Kernel arguments must be type-hinted. Kernels can have at most 8 parameters, e.g.,
-
-.. code-block:: python
-
-    @ti.kernel
-    def print_xy(x: ti.i32, y: ti.f32):
-      print(x + y)
-
-    @ti.kernel
-    def copy(x: ti.template(), y: ti.template()):
-      for i in x:
-        y[i] = x[i]
-
-* For differentiable programming kernels should better have either serial statements or a single parallel for-loop. If you don't use differentiable programming, feel free to ignore this tip.
+A Python function decorated by ``@ti.kernel`` is a **Taichi kernel**:
 
 .. code-block:: python
-
-
-    @ti.kernel
-    def a_hard_kernel_to_auto_differentiate():
-      sum = 0
-      for i in x:
-        sum += x[i]
-      for i in y:
-        y[i] = sum
-
-    # instead, split it into multiple kernels to be nice to the Taichi autodiff compiler:
-
-    @ti.kernel
-    def reduce():
-      for i in x:
-        sum[None] += x[i]
-
-    @ti.kernel
-    def assign()
-      for i in y:
-        y[i] = sum[None]
-
-    def main():
-      with ti.Tape(loss):
-        ...
-        sum[None] = 0
-        reduce()
-        assign()
-        ...
-
-
-Functions
------------------------------------------------
-
-Use ``@ti.func`` to decorate your Taichi functions. These functions are callable only in `Taichi`-scope. Don't call them in `Python`-scope. All function calls are force-inlined, so no recursion supported.
-
-.. code-block:: python
-
-   @ti.func
-   def laplacian(t, i, j):
-     return inv_dx2 * (
-         -4 * p[t, i, j] + p[t, i, j - 1] + p[t, i, j + 1] + p[t, i + 1, j] +
-         p[t, i - 1, j])
 
    @ti.kernel
-   def fdtd(t: ti.i32):
-     for i in range(n_grid): # Parallelized over GPU threads
-       for j in range(n_grid):
-         laplacian_p = laplacian(t - 2, i, j)
-         laplacian_q = laplacian(t - 1, i, j)
-         p[t, i, j] = 2 * p[t - 1, i, j] + (
-             c * c * dt * dt + c * alpha * dt) * laplacian_q - p[
-                        t - 2, i, j] - c * alpha * dt * laplacian_p
+   def my_kernel():
+       ...
+
+   my_kernel()
 
 
-.. warning::
+Kernels should be called from **Python-scope**.
 
-    Functions with multiple return values are not supported for now. Use a **local** variable to store the results instead:
+.. note::
+
+    For people from CUDA, Taichi kernels = ``__global__`` functions.
+
+
+Arguments
+*********
+
+Kernels can have at most 8 parameters so that you can pass values from
+Python-scope to Taichi-scope easily.
+
+Kernel arguments must be type-hinted:
+
+.. code-block:: python
+
+    @ti.kernel
+    def my_kernel(x: ti.i32, y: ti.f32):
+        print(x + y)
+
+    my_kernel(2, 3.3)  # prints: 5.3
+
+.. note::
+
+    For now, we only support scalars as arguments. Specifying ``ti.Matrix`` or ``ti.Vector`` as argument is not supported. For example:
 
     .. code-block:: python
 
-      # Bad function
+        @ti.kernel
+        def bad_kernel(v: ti.Vector):
+            ...
+
+        @ti.kernel
+        def good_kernel(vx: ti.f32, vy: ti.f32):
+            v = ti.Vector([vx, vy])
+            ...
+
+
+Return value
+************
+
+A kernel may or may not have a **scalar** return value.
+If it does, the type of return value must be hinted:
+
+.. code-block:: python
+
+    @ti.kernel
+    def my_kernel() -> ti.f32:
+        return 233.33
+
+    print(my_kernel())  # 233.33
+
+
+The return value will be automatically cast into the hinted type. e.g.,
+
+.. code-block:: python
+
+    @ti.kernel
+    def add_xy() -> ti.i32:  # int32
+        return 233.33
+
+    print(my_kernel())  # 233, since return type is ti.i32
+
+
+.. note::
+
+    For now, a kernel can only have one scalar return value. Returning ``ti.Matrix`` or ``ti.Vector`` is not supported. Python-style tuple return is not supported either. For example:
+
+    .. code-block:: python
+
+        @ti.kernel
+        def bad_kernel() -> ti.Matrix:
+            return ti.Matrix([[1, 0], [0, 1]])  # Error
+
+        @ti.kernel
+        def bad_kernel() -> (ti.i32, ti.f32):
+            x = 1
+            y = 0.5
+            return x, y  # Error
+
+
+Advanced arguments
+******************
+
+We also support **template arguments** (see :ref:`template_metaprogramming`) and **external array arguments** (see :ref:`external`) in Taichi kernels.  Use ``ti.template()`` or ``ti.ext_arr()`` as their type-hints respectively.
+
+.. note::
+
+   When using differentiable programming, there are a few more constraints on kernel structures. See the **Kernel Simplicity Rule** in :ref:`differentiable`.
+
+   Also, please do not use kernel return values in differentiable programming, since the return value will not be tracked by automatic differentiation. Instead, store the result into a global variable (e.g. ``loss[None]``).
+
+
+Functions
+---------
+
+A Python function decorated by ``@ti.func`` is a **Taichi function**:
+
+.. code-block:: python
+
+    @ti.func
+    def my_func():
+        ...
+
+    @ti.kernel
+    def my_kernel():
+        ...
+        my_func()  # call functions from Taichi-scope
+        ...
+
+    my_kernel()    # call kernels from Python-scope
+
+
+Taichi functions should be called from **Taichi-scope**.
+
+.. note::
+
+    For people from CUDA, Taichi functions = ``__device__`` functions.
+
+.. note::
+
+    Taichi functions can be nested.
+
+.. warning::
+
+    Currently, all functions are force-inlined. Therefore, no recursion is allowed.
+
+
+Arguments and return values
+***************************
+
+Functions can have multiple arguments and return values.
+Unlike kernels, arguments in functions don't need to be type-hinted:
+
+.. code-block:: python
+
+    @ti.func
+    def my_add(x, y):
+        return x + y
+
+
+    @ti.kernel
+    def my_kernel():
+        ...
+        ret = my_add(2, 3.3)
+        print(ret)  # 5.3
+        ...
+
+
+Function arguments are passed by value. So changes made inside function scope
+won't affect the outside value in the caller:
+
+.. code-block:: python
+
+    @ti.func
+    def my_func(x):
+        x = x + 1  # won't change the original value of x
+
+
+    @ti.kernel
+    def my_kernel():
+        ...
+        x = 233
+        my_func(x)
+        print(x)  # 233
+        ...
+
+
+Advanced arguments
+******************
+
+You may use ``ti.template()`` as type-hint to force arguments to be passed by
+reference:
+
+.. code-block:: python
+
+    @ti.func
+    def my_func(x: ti.template()):
+        x = x + 1  # will change the original value of x
+
+
+    @ti.kernel
+    def my_kernel():
+        ...
+        x = 233
+        my_func(x)
+        print(x)  # 234
+        ...
+
+
+.. note::
+
+    Unlike kernels, functions **do support vectors or matrices as arguments and return values**:
+
+    .. code-block:: python
+
+        @ti.func
+        def sdf(u):  # functions support matrices and vectors as arguments. No type-hints needed.
+            return u.norm() - 1
+
+        @ti.kernel
+        def render(d_x: ti.f32, d_y: ti.f32):  # kernels do not support vector/matrix arguments yet. We have to use a workaround.
+            d = ti.Vector([d_x, d_y])
+            p = ti.Vector([0.0, 0.0])
+            t = sdf(p)
+            p += d * t
+            ...
+
+.. warning::
+
+    Functions with multiple ``return`` statements are not supported for now. Use a **local** variable to store the results, so that you end up with only one ``return`` statement:
+
+    .. code-block:: python
+
+      # Bad function - two return statements
       @ti.func
       def safe_sqrt(x):
         if x >= 0:
@@ -89,84 +263,12 @@ Use ``@ti.func`` to decorate your Taichi functions. These functions are callable
         else:
           return 0.0
 
-      # Good function
+      # Good function - single return statement
       @ti.func
       def safe_sqrt(x):
-        rst = 0.0
+        ret = 0.0
         if x >= 0:
-          rst = ti.sqrt(x)
+          ret = ti.sqrt(x)
         else:
-          rst = 0.0
-        return rst
-
-.. warning::
-
-    All functions are force-inlined. Function arguments are passed by value.
-
-
-Data layout
--------------------
-Non-power-of-two tensor dimensions are promoted into powers of two and thus these tensors will occupy more virtual address space.
-For example, a tensor of size ``(18, 65)`` will be materialized as ``(32, 128)``.
-
-
-Scalar arithmetics
------------------------------------------
-Supported scalar functions:
-
-* ``ti.sin(x)``
-* ``ti.cos(x)``
-* ``ti.cast(x, type)``
-* ``ti.sqr(x)``
-* ``ti.floor(x)``
-* ``ti.inv(x)``
-* ``ti.tan(x)``
-* ``ti.tanh(x)``
-* ``ti.exp(x)``
-* ``ti.log(x)``
-* ``abs(x)``
-* ``ti.random(type)``
-* ``max(a, b)``
-* ``min(a, b)``
-* ``ti.length(dynamic_snode)``
-* Inplace adds are atomic on global data. I.e., ``a += b`` is equivalent to ``ti.atomic_add(a, b)``
-
-.. note::
-
-  Python 3 distinguishes ``/`` (true division) and ``//`` (floor division). For example, ``1.0 / 2.0 = 0.5``,
-  ``1 / 2 = 0.5``, ``1 // 2 = 0``, ``4.2 // 2 = 2``. Taichi follows this design:
-
-     - *true divisions* on integral types will first cast their operands to the default float point type.
-     - *floor divisions* on float-point types will first cast their operands to the default integer type.
-
-  To avoid such implicit casting, you can manually cast your operands to desired types, using ``ti.cast``.
-  Read :ref:`default_precisions` for more details on default numerical types.
-
-Debugging
--------------------------------------------
-
-Debug your program with ``print(x)``.
-
-
-Why Python frontend
------------------------------------
-
-Embedding the language in ``python`` has the following advantages:
-
-* Easy to learn. Taichi has a very similar syntax to Python.
-* Easy to run. No ahead-of-time compilation is needed.
-* This design allows people to reuse existing python infrastructure:
-
-  * IDEs. A python IDE mostly works for Taichi with syntax highlighting, syntax checking, and autocomplete.
-  * Package manager (pip). A developed Taichi application and be easily submitted to ``PyPI`` and others can easily set it up with ``pip``.
-  * Existing packages. Interacting with other python components (e.g. ``matplotlib`` and ``numpy``) is just trivial.
-
-* The built-in AST manipulation tools in ``python`` allow us to do magical things, as long as the kernel body can be parsed by the Python parser.
-
-However, this design has drawbacks as well:
-
-* Taichi kernels must parse-able by Python parsers. This means Taichi syntax cannot go beyond Taichi syntax.
-
-  * For example, indexing is always needed when accessing elements in Taichi tensors, even if the tensor is 0D. Use ``x[None] = 123`` to set the value in ``x`` if ``x`` is 0D. This is because ``x = 123`` will set ``x`` itself (instead of its containing value) to be the constant ``123`` in python syntax, and, unfortunately, we cannot modify this behavior.
-
-* Python has relatively low performance. This can cause a performance issue when initializing large Taichi tensors with pure python scripts. A Taichi kernel should be used to initialize a huge tensor.
+          ret = 0.0
+        return ret

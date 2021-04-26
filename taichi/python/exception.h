@@ -5,10 +5,11 @@
 
 #pragma once
 
-#include <taichi/common/interface.h>
+#include "taichi/common/core.h"
+
 #include <exception>
 
-TC_NAMESPACE_BEGIN
+TI_NAMESPACE_BEGIN
 
 class ExceptionForPython : public std::exception {
  private:
@@ -24,4 +25,4 @@ class ExceptionForPython : public std::exception {
 
 void raise_assertion_failure_in_python(const std::string &msg);
 
-TC_NAMESPACE_END
+TI_NAMESPACE_END

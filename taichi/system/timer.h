@@ -8,17 +8,17 @@
 #include <string>
 #include <cstdio>
 #include <map>
-#include <taichi/common/util.h>
-#if defined(TC_PLATFORM_UNIX)
+#include "taichi/common/core.h"
+#if defined(TI_PLATFORM_UNIX)
 #include <sys/time.h>
 #else
 #pragma warning(push)
 #pragma warning(disable : 4005)
-#include <windows.h>
+#include "taichi/platform/windows/windows.h"
 #pragma warning(pop)
 #endif
 
-TC_NAMESPACE_BEGIN
+TI_NAMESPACE_BEGIN
 
 #define TIME(x)                                                      \
   {                                                                  \
@@ -27,17 +27,18 @@ TC_NAMESPACE_BEGIN
     taichi::Time::Timer _(timer_name);                               \
     x;                                                               \
   }
-#define TC_TIME(x) TIME(x)
+#define TI_TIME(x) TIME(x)
 
 #include <stdint.h>
 
 class Time {
  public:
   static double get_time();
-
   static uint64 get_cycles();
+  static void wait_until(double t);
 
   static void usleep(double us);
+  static void msleep(double ms);
   static void sleep(double s);
 
   class Timer {
@@ -102,4 +103,4 @@ class Time {
   };
 };
 
-TC_NAMESPACE_END
+TI_NAMESPACE_END

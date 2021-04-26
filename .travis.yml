@@ -1,16 +1,40 @@
 sudo: required
 
-common_sources: &1
-- ubuntu-toolchain-r-test
 language: cpp
+
 matrix:
   include:
-  - os: osx
+  - name: "OS X + Python 3.6"
+    os: osx
     osx_image: xcode10.3
-    python:
-      - "3.7"
     env:
-      - MATRIX_EVAL="CC=clang && CXX=clang++ && PYTHON=python3.7"
+      - MATRIX_EVAL="CC=clang && CXX=clang++ && PYTHON_VERSION=3.6.1 && PYTHON=python3"
+  - name: "OS X + Python 3.7"
+    if: commit_message =~ /^\[release\]/
+    os: osx
+    osx_image: xcode10.3
+    env:
+      - MATRIX_EVAL="CC=clang && CXX=clang++ && PYTHON_VERSION=3.7.1 && PYTHON=python3"
+  - name: "OS X + Python 3.8"
+    if: commit_message =~ /^\[release\]/
+    os: osx
+    osx_image: xcode10.3
+    env:
+      - MATRIX_EVAL="CC=clang && CXX=clang++ && PYTHON_VERSION=3.8.1 && PYTHON=python3"
+
+skip_commits:
+  files:
+    - '*.md'
+    - '*.rst'
+    - docs
+    - benchmarks
+    - examples
+    - misc
+    - '.*'
+
+cache:
+  - build -> CMakeLists.txt, cmake/*
+
 before_install:
 - eval "${MATRIX_EVAL}"
 - echo $CXX
@@ -20,21 +44,25 @@ before_install:
 - cd $TRAVIS_BUILD_DIR
 - mkdir taichi-llvm
 - cd taichi-llvm
-- wget https://github.com/yuanming-hu/taichi_assets/releases/download/llvm8/taichi-llvm-8.0.1.zip --retry-on-http-error=403 --waitretry=3 --tries=5
-- unzip taichi-llvm-8.0.1.zip
+- wget https://github.com/taichi-dev/taichi_assets/releases/download/llvm10/taichi-llvm-10.0.0-macos.zip --retry-on-http-error=403 --waitretry=3 --tries=5 -O llvm.zip
+- unzip llvm.zip
 - export PATH=$TRAVIS_BUILD_DIR/taichi-llvm/bin/:$PATH
 - ls $TRAVIS_BUILD_DIR/taichi-llvm/bin/
 - echo $PATH
 - cd ..
 - llvm-config --version
 
+install:
+- .travis/install.sh
+
 script:
 - cd $TRAVIS_BUILD_DIR
-- $PYTHON dev_setup.py ci
+- export PATH="$HOME/.pyenv/shims:$HOME/.pyenv/bin:$PATH"
+- $PYTHON misc/ci_setup.py ci
 - export TAICHI_REPO_DIR=$TRAVIS_BUILD_DIR
 - export PYTHONPATH=$TAICHI_REPO_DIR/python
 - export PATH=$TAICHI_REPO_DIR/bin:$PATH
-- ti test && cd python && $PYTHON build.py upload
+- ti test -Cvr2 -t2 && cd python && $PYTHON build.py try_upload && bash <(curl -s https://codecov.io/bash)
 
 env:
   global:

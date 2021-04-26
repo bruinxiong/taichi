@@ -1,8 +1,9 @@
-include README
 include MANIFEST.in
 include *.txt
 include *.py
 include *.cfg
+include taichi/*.md
+include taichi/assets/*
 include taichi/lib/*.so
 include taichi/lib/*.pyd
 include taichi/lib/*.bc

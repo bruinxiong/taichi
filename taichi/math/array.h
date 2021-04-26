@@ -5,11 +5,9 @@
 
 #pragma once
 
-#include "array_1d.h"
 #include "array_2d.h"
-#include "array_3d.h"
 
-TC_NAMESPACE_BEGIN
+TI_NAMESPACE_BEGIN
 template <int dim>
 class IndexND;
 
@@ -19,4 +17,4 @@ class RegionND;
 template <int dim, typename T>
 class ArrayND;
 
-TC_NAMESPACE_END
+TI_NAMESPACE_END

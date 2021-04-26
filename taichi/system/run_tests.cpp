@@ -3,19 +3,18 @@
     The use of this software is governed by the LICENSE file.
 *******************************************************************************/
 
-#include <taichi/common/util.h>
-#include <taichi/common/task.h>
-#include <taichi/testing.h>
+#include "taichi/common/core.h"
+#include "taichi/common/task.h"
+#include "taichi/util/testing.h"
 
-TC_NAMESPACE_BEGIN
+TI_NAMESPACE_BEGIN
 
 class RunTests : public Task {
   virtual std::string run(const std::vector<std::string> &parameters) {
-    run_tests(parameters);
-    return "";
+    return std::to_string(run_tests(parameters));
   }
 };
 
-TC_IMPLEMENTATION(Task, RunTests, "test");
+TI_IMPLEMENTATION(Task, RunTests, "test");
 
-TC_NAMESPACE_END
+TI_NAMESPACE_END

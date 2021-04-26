@@ -1,336 +1,244 @@
-from .core import taichi_lang_core
-from .util import *
-import traceback
+from taichi.core.util import ti_core as _ti_core
+from taichi.lang import impl
+from taichi.lang.common_ops import TaichiOperations
+from taichi.lang.util import (is_taichi_class, python_scope, to_numpy_type,
+                              to_pytorch_type)
+from taichi.misc.util import deprecated
+
+import taichi as ti
 
 
 # Scalar, basic data type
-class Expr:
-  materialize_layout_callback = None
-  layout_materialized = False
+class Expr(TaichiOperations):
+    def __init__(self, *args, tb=None):
+        _taichi_skip_traceback = 1
+        self.getter = None
+        self.setter = None
+        self.tb = tb
+        if len(args) == 1:
+            if isinstance(args[0], _ti_core.Expr):
+                self.ptr = args[0]
+            elif isinstance(args[0], Expr):
+                self.ptr = args[0].ptr
+                self.tb = args[0].tb
+            elif is_taichi_class(args[0]):
+                raise ValueError('cannot initialize scalar expression from '
+                                 f'taichi class: {type(args[0])}')
+            else:
+                # assume to be constant
+                arg = args[0]
+                try:
+                    import numpy as np
+                    if isinstance(arg, np.ndarray):
+                        arg = arg.dtype(arg)
+                except:
+                    pass
+                self.ptr = impl.make_constant_expr(arg).ptr
+        else:
+            assert False
+        if self.tb:
+            self.ptr.set_tb(self.tb)
+        self.grad = None
+        self.val = self
 
-  def __init__(self, *args, tb=None):
-    self.getter = None
-    self.setter = None
-    self.tb = tb
-    if len(args) == 1:
-      if isinstance(args[0], taichi_lang_core.Expr):
-        self.ptr = args[0]
-      elif isinstance(args[0], Expr):
-        self.ptr = args[0].ptr
-        self.tb = args[0].tb
-      else:
-        arg = args[0]
-        try:
-          import numpy as np
-          if isinstance(arg, np.ndarray):
-            arg = arg.dtype(arg)
-        except:
-          pass
-        from .impl import make_constant_expr
-        self.ptr = make_constant_expr(arg).ptr
-    else:
-      assert False
-    if self.tb:
-      self.ptr.set_tb(self.tb)
-    self.grad = None
-    self.val = self
+    @python_scope
+    def __setitem__(self, key, value):
+        impl.get_runtime().materialize()
+        self.initialize_accessor()
+        if key is None:
+            key = ()
+        if not isinstance(key, (tuple, list)):
+            key = (key, )
+        assert len(key) == len(self.shape)
+        key = key + ((0, ) * (_ti_core.get_max_num_indices() - len(key)))
+        self.setter(value, *key)
 
-  @staticmethod
-  def stack_info():
-    s = traceback.extract_stack()[3:-1]
-    for i, l in enumerate(s):
-      if 'taichi_ast_generator' in l:
-        s = s[i + 1:]
-        break
-    raw = ''.join(traceback.format_list(s))
-    # remove the confusing last line
-    return '\n'.join(raw.split('\n')[:-3]) + '\n'
+    @python_scope
+    def __getitem__(self, key):
+        impl.get_runtime().materialize()
+        self.initialize_accessor()
+        if key is None:
+            key = ()
+        if not isinstance(key, (tuple, list)):
+            key = (key, )
+        key = key + ((0, ) * (_ti_core.get_max_num_indices() - len(key)))
+        return self.getter(*key)
 
-  def __add__(self, other):
-    other = Expr(other)
-    return Expr(
-        taichi_lang_core.expr_add(self.ptr, other.ptr), tb=self.stack_info())
+    def loop_range(self):
+        return self
 
-  __radd__ = __add__
+    def get_field_members(self):
+        return [self]
 
-  def __iadd__(self, other):
-    taichi_lang_core.expr_atomic_add(self.ptr, other.ptr)
+    @deprecated('x.get_tensor_members()', 'x.get_field_members()')
+    def get_tensor_members(self):
+        return self.get_field_members()
 
-  def __neg__(self):
-    return Expr(taichi_lang_core.expr_neg(self.ptr), tb=self.stack_info())
+    @python_scope
+    def initialize_accessor(self):
+        if self.getter:
+            return
+        snode = self.ptr.snode()
 
-  def __sub__(self, other):
-    other = Expr(other)
-    return Expr(
-        taichi_lang_core.expr_sub(self.ptr, other.ptr), tb=self.stack_info())
+        if _ti_core.is_real(self.dtype):
 
-  def __isub__(self, other):
-    taichi_lang_core.expr_atomic_sub(self.ptr, other.ptr)
+            def getter(*key):
+                assert len(key) == _ti_core.get_max_num_indices()
+                return snode.read_float(key)
 
-  def __imul__(self, other):
-    self.assign(Expr(taichi_lang_core.expr_mul(self.ptr, other.ptr)))
+            def setter(value, *key):
+                assert len(key) == _ti_core.get_max_num_indices()
+                snode.write_float(key, value)
+        else:
+            if _ti_core.is_signed(self.dtype):
 
-  def __itruediv__(self, other):
-    self.assign(Expr(taichi_lang_core.expr_truediv(self.ptr, Expr(other).ptr)))
+                def getter(*key):
+                    assert len(key) == _ti_core.get_max_num_indices()
+                    return snode.read_int(key)
+            else:
 
-  def __ifloordiv__(self, other):
-    self.assign(Expr(taichi_lang_core.expr_floordiv(self.ptr, Expr(other).ptr)))
+                def getter(*key):
+                    assert len(key) == _ti_core.get_max_num_indices()
+                    return snode.read_uint(key)
 
-  def __rsub__(self, other):
-    other = Expr(other)
-    return Expr(taichi_lang_core.expr_sub(other.ptr, self.ptr))
+            def setter(value, *key):
+                assert len(key) == _ti_core.get_max_num_indices()
+                snode.write_int(key, value)
 
-  def __mul__(self, other):
-    if is_taichi_class(other) and hasattr(other, '__rmul__'):
-      return other.__rmul__(self)
-    else:
-      other = Expr(other)
-      return Expr(taichi_lang_core.expr_mul(self.ptr, other.ptr))
+        self.getter = getter
+        self.setter = setter
 
-  __rmul__ = __mul__
+    @python_scope
+    def set_grad(self, grad):
+        self.grad = grad
+        self.ptr.set_grad(grad.ptr)
 
-  def __mod__(self, other):
-    return Expr(taichi_lang_core.expr_mod(self.ptr, Expr(other).ptr))
+    @python_scope
+    def clear(self, deactivate=False):
+        assert not deactivate
+        node = self.ptr.snode().parent
+        assert node
+        node.clear_data()
 
-  def __truediv__(self, other):
-    return Expr(taichi_lang_core.expr_truediv(self.ptr, Expr(other).ptr))
+    @python_scope
+    def fill(self, val):
+        # TODO: avoid too many template instantiations
+        from taichi.lang.meta import fill_tensor
+        fill_tensor(self, val)
 
-  def __rtruediv__(self, other):
-    return Expr(taichi_lang_core.expr_truediv(Expr(other).ptr, self.ptr))
-  
-  def __floordiv__(self, other):
-    return Expr(taichi_lang_core.expr_floordiv(self.ptr, Expr(other).ptr))
+    def parent(self, n=1):
+        p = self.snode.parent(n)
+        return Expr(_ti_core.global_var_expr_from_snode(p.ptr))
 
-  def __rfloordiv__(self, other):
-    return Expr(taichi_lang_core.expr_floordiv(Expr(other).ptr, self.ptr))
+    def is_global(self):
+        return self.ptr.is_global_var() or self.ptr.is_external_var()
 
-  def __le__(self, other):
-    other = Expr(other)
-    return Expr(taichi_lang_core.expr_cmp_le(self.ptr, other.ptr))
+    @property
+    def snode(self):
+        from taichi.lang.snode import SNode
+        return SNode(self.ptr.snode())
 
-  def __lt__(self, other):
-    other = Expr(other)
-    return Expr(taichi_lang_core.expr_cmp_lt(self.ptr, other.ptr))
+    def __hash__(self):
+        return self.ptr.get_raw_address()
 
-  def __ge__(self, other):
-    other = Expr(other)
-    return Expr(taichi_lang_core.expr_cmp_ge(self.ptr, other.ptr))
+    @property
+    def shape(self):
+        if self.ptr.is_external_var():
+            dim = impl.get_external_tensor_dim(self.ptr)
+            ret = [
+                Expr(impl.get_external_tensor_shape_along_axis(self.ptr, i))
+                for i in range(dim)
+            ]
+            return ret
+        return self.snode.shape
 
-  def __gt__(self, other):
-    other = Expr(other)
-    return Expr(taichi_lang_core.expr_cmp_gt(self.ptr, other.ptr))
+    @deprecated('x.dim()', 'len(x.shape)')
+    def dim(self):
+        return len(self.shape)
 
-  def __eq__(self, other):
-    other = Expr(other)
-    return Expr(taichi_lang_core.expr_cmp_eq(self.ptr, other.ptr))
+    @property
+    def dtype(self):
+        return self.snode.dtype
 
-  def __ne__(self, other):
-    other = Expr(other)
-    return Expr(taichi_lang_core.expr_cmp_ne(self.ptr, other.ptr))
+    @deprecated('x.data_type()', 'x.dtype')
+    def data_type(self):
+        return self.snode.dtype
 
-  def __getitem__(self, item):
-    item = Expr(item)
-    return Expr(expr_index(self, item.ptr))
+    @python_scope
+    def to_numpy(self):
+        import numpy as np
+        from taichi.lang.meta import tensor_to_ext_arr
+        arr = np.zeros(shape=self.shape, dtype=to_numpy_type(self.dtype))
+        tensor_to_ext_arr(self, arr)
+        ti.sync()
+        return arr
 
-  def __and__(self, item):
-    item = Expr(item)
-    return Expr(taichi_lang_core.expr_bit_and(self.ptr, item.ptr))
+    @python_scope
+    def to_torch(self, device=None):
+        import torch
+        from taichi.lang.meta import tensor_to_ext_arr
+        arr = torch.zeros(size=self.shape,
+                          dtype=to_pytorch_type(self.dtype),
+                          device=device)
+        tensor_to_ext_arr(self, arr)
+        ti.sync()
+        return arr
 
-  def __or__(self, item):
-    item = Expr(item)
-    return Expr(taichi_lang_core.expr_bit_or(self.ptr, item.ptr))
+    @python_scope
+    def from_numpy(self, arr):
+        assert len(self.shape) == len(arr.shape)
+        s = self.shape
+        for i in range(len(self.shape)):
+            assert s[i] == arr.shape[i]
+        from taichi.lang.meta import ext_arr_to_tensor
+        if hasattr(arr, 'contiguous'):
+            arr = arr.contiguous()
+        ext_arr_to_tensor(arr, self)
+        ti.sync()
 
-  def logical_and(self, item):
-    return self & item
+    @python_scope
+    def from_torch(self, arr):
+        self.from_numpy(arr.contiguous())
 
-  def logical_or(self, item):
-    return self | item
+    @python_scope
+    def copy_from(self, other):
+        assert isinstance(other, Expr)
+        from taichi.lang.meta import tensor_to_tensor
+        assert len(self.shape) == len(other.shape)
+        tensor_to_tensor(self, other)
 
-  def logical_not(self):
-    return Expr(taichi_lang_core.expr_bit_not(self.ptr), tb=self.stack_info())
+    def __str__(self):
+        """Python scope field print support."""
+        if impl.inside_kernel():
+            return '<ti.Expr>'  # make pybind11 happy, see Matrix.__str__
+        else:
+            return str(self.to_numpy())
 
-  def assign(self, other):
-    taichi_lang_core.expr_assign(self.ptr, Expr(other).ptr, self.stack_info())
-
-  def serialize(self):
-    return self.ptr.serialize()
-
-  def initialize_accessor(self):
-    if self.getter:
-      return
-    snode = self.ptr.snode()
-
-    if self.snode().data_type() == f32 or self.snode().data_type() == f64:
-      def getter(*key):
-        assert len(key) == taichi_lang_core.get_max_num_indices()
-        return snode.read_float(key)
-
-      def setter(value, *key):
-        assert len(key) == taichi_lang_core.get_max_num_indices()
-        snode.write_float(key, value)
-    else:
-      def getter(*key):
-        assert len(key) == taichi_lang_core.get_max_num_indices()
-        return snode.read_int(key)
-
-      def setter(value, *key):
-        assert len(key) == taichi_lang_core.get_max_num_indices()
-        snode.write_int(key, value)
-
-    self.getter = getter
-    self.setter = setter
-
-  def __setitem__(self, key, value):
-    if not Expr.layout_materialized:
-      self.materialize_layout_callback()
-    self.initialize_accessor()
-    if key is None:
-      key = ()
-    if not isinstance(key, tuple):
-      key = (key,)
-    assert len(key) == self.dim()
-    key = key + ((0,) * (taichi_lang_core.get_max_num_indices() - len(key)))
-    self.setter(value, *key)
-
-  def __getitem__(self, key):
-    if not Expr.layout_materialized:
-      self.materialize_layout_callback()
-    self.initialize_accessor()
-    if key is None:
-      key = ()
-    if not isinstance(key, tuple):
-      key = (key,)
-    key = key + ((0,) * (taichi_lang_core.get_max_num_indices() - len(key)))
-    return self.getter(*key)
-
-  def loop_range(self):
-    return self
-
-  def augassign(self, x, op):
-    x = Expr(x)
-    if op == 'Add':
-      self += x
-    elif op == 'Sub':
-      self -= x
-    elif op == 'Mult':
-      self *= x
-    elif op == 'Div':
-      self /= x
-    elif op == 'FloorDiv':
-      self //= x
-    else:
-      assert False, op
-
-  def set_grad(self, grad):
-    self.grad = grad
-    self.ptr.set_grad(grad.ptr)
-
-  def clear(self, deactivate=False):
-    assert not deactivate
-    node = self.ptr.snode().parent
-    assert node
-    node.clear_data()
-
-  def fill(self, val):
-    # TODO: avoid too many template instantiations
-    from .meta import fill_tensor
-    fill_tensor(self, val)
-
-  def atomic_add(self, other):
-    taichi_lang_core.expr_atomic_add(self.ptr, other.ptr)
-
-  def __pow__(self, power, modulo=None):
-    assert isinstance(power, int) and power >= 0
-    if power == 0:
-      return Expr(1)
-    ret = self
-    for i in range(power - 1):
-      ret = ret * self
-    return ret
-
-  def __abs__(self):
-    import taichi as ti
-    return ti.abs(self)
-
-  def __ti_int__(self):
-    import taichi as ti
-    return ti.cast(self, ti.get_runtime().default_ip)
-
-  def __ti_float__(self):
-    import taichi as ti
-    return ti.cast(self, ti.get_runtime().default_fp)
-
-  def parent(self):
-    from .snode import SNode
-    return SNode(self.ptr.snode().parent)
-
-  def snode(self):
-    from .snode import SNode
-    return SNode(self.ptr.snode())
-
-  def __hash__(self):
-    return self.ptr.get_raw_address()
-
-  def dim(self):
-    if not Expr.layout_materialized:
-      self.materialize_layout_callback()
-    return self.snode().dim()
-
-  def shape(self):
-    dim = self.dim()
-    s = []
-    for i in range(dim):
-      s.append(self.snode().get_shape(i))
-    return tuple(s)
-
-  def to_numpy(self):
-    from .meta import tensor_to_ext_arr
-    import numpy as np
-    arr = np.empty(
-        shape=self.shape(), dtype=to_numpy_type(self.snode().data_type()))
-    tensor_to_ext_arr(self, arr)
-    return arr
-
-  def to_torch(self, device=None):
-    from .meta import tensor_to_ext_arr
-    import torch
-    arr = torch.empty(
-        size=self.shape(), dtype=to_pytorch_type(self.snode().data_type()), device=device)
-    tensor_to_ext_arr(self, arr)
-    return arr
-
-  def from_numpy(self, arr):
-    assert self.dim() == len(arr.shape)
-    s = self.shape()
-    for i in range(self.dim()):
-      assert s[i] == arr.shape[i]
-    from .meta import ext_arr_to_tensor
-    if hasattr(arr, 'contiguous'):
-      arr = arr.contiguous()
-    ext_arr_to_tensor(arr, self)
-
-  def from_torch(self, arr):
-    self.from_numpy(arr.contiguous())
+    def __repr__(self):
+        # make interactive shell happy, prevent materialization
+        if self.is_global():
+            # make interactive shell happy, prevent materialization
+            return '<ti.field>'
+        else:
+            return '<ti.Expr>'
 
 
 def make_var_vector(size):
-  import taichi as ti
-  exprs = []
-  for i in range(size):
-    exprs.append(taichi_lang_core.make_id_expr(''))
-  return ti.Vector(exprs)
+    exprs = []
+    for _ in range(size):
+        exprs.append(_ti_core.make_id_expr(''))
+    return ti.Vector(exprs)
 
 
 def make_expr_group(*exprs):
-  if len(exprs) == 1:
-    from .matrix import Matrix
-    if isinstance(exprs[0], (list, tuple)):
-      exprs = exprs[0]
-    elif isinstance(exprs[0], Matrix):
-      mat = exprs[0]
-      assert mat.m == 1
-      exprs = mat.entries
-  expr_group = taichi_lang_core.ExprGroup()
-  for i in exprs:
-    expr_group.push_back(Expr(i).ptr)
-  return expr_group
+    if len(exprs) == 1:
+        if isinstance(exprs[0], (list, tuple)):
+            exprs = exprs[0]
+        elif isinstance(exprs[0], ti.Matrix):
+            mat = exprs[0]
+            assert mat.m == 1
+            exprs = mat.entries
+    expr_group = _ti_core.ExprGroup()
+    for i in exprs:
+        expr_group.push_back(Expr(i).ptr)
+    return expr_group

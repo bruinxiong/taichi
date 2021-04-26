@@ -3,15 +3,11 @@
     The use of this software is governed by the LICENSE file.
 *******************************************************************************/
 
-#include <taichi/python/export.h>
-#include <taichi/common/interface.h>
-#include <taichi/visualization/rgb.h>
-#include <taichi/io/io.h>
-#include <taichi/geometry/factory.h>
+#include "taichi/python/export.h"
+#include "taichi/common/interface.h"
+#include "taichi/util/io.h"
 
-TC_NAMESPACE_BEGIN
-
-void export_lang(py::module &m);
+TI_NAMESPACE_BEGIN
 
 PYBIND11_MODULE(taichi_core, m) {
   m.doc() = "taichi_core";
@@ -20,11 +16,10 @@ PYBIND11_MODULE(taichi_core, m) {
     kv.second(&m);
   }
 
-  export_math(m);
-  export_visual(m);
-  export_io(m);
-  export_misc(m);
   export_lang(m);
+  export_math(m);
+  export_misc(m);
+  export_visual(m);
 }
 
-TC_NAMESPACE_END
+TI_NAMESPACE_END

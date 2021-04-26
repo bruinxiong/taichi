@@ -1,5 +1,11 @@
 // The loop vectorizer
-#include "../ir.h"
+
+#include "taichi/program/program.h"
+#include "taichi/ir/ir.h"
+#include "taichi/ir/type_factory.h"
+#include "taichi/ir/statements.h"
+#include "taichi/ir/transforms.h"
+#include "taichi/ir/visitors.h"
 
 TLANG_NAMESPACE_BEGIN
 
@@ -9,21 +15,28 @@ class LoopVectorize : public IRVisitor {
  public:
   int vectorize;
   Stmt *loop_var;  // an alloca...
+  const CompileConfig &config;
 
-  LoopVectorize() {
+  explicit LoopVectorize(const CompileConfig &config) : config(config) {
     allow_undefined_visitor = true;
     invoke_default_visitor = true;
     loop_var = nullptr;
     vectorize = 1;
   }
 
+  static void widen_type(DataType &type, int width) {
+    if (width != 1) {
+      type = Program::get_type_factory().get_vector_type(width, type);
+    }
+  }
+
   void visit(Stmt *stmt) override {
-    stmt->ret_type.width *= vectorize;
+    widen_type(stmt->ret_type, vectorize);
   }
 
   void visit(ConstStmt *stmt) override {
     stmt->val.repeat(vectorize);
-    stmt->ret_type.width *= vectorize;
+    widen_type(stmt->ret_type, vectorize);
   }
 
   void visit(Block *stmt_list) override {
@@ -38,17 +51,17 @@ class LoopVectorize : public IRVisitor {
 
   void visit(GlobalPtrStmt *ptr) override {
     ptr->snodes.repeat(vectorize);
-    ptr->width() *= vectorize;
+    widen_type(ptr->ret_type, vectorize);
   }
 
   void visit(AllocaStmt *alloca) override {
-    alloca->ret_type.width *= vectorize;
+    widen_type(alloca->ret_type, vectorize);
   }
 
   void visit(SNodeOpStmt *stmt) override {
     if (vectorize == 1)
       return;
-    // TC_NOT_IMPLEMENTED;
+    // TI_NOT_IMPLEMENTED;
     /*
     stmt->snodes.repeat(vectorize);
     stmt->ret_type.width *= vectorize;
@@ -59,7 +72,7 @@ class LoopVectorize : public IRVisitor {
     if (vectorize == 1)
       return;
     int original_width = stmt->width();
-    stmt->ret_type.width *= vectorize;
+    widen_type(stmt->ret_type, vectorize);
     stmt->elements.repeat(vectorize);
     // TODO: this can be buggy
     int stride = stmt->elements[original_width - 1].index + 1;
@@ -76,19 +89,18 @@ class LoopVectorize : public IRVisitor {
     if (vectorize == 1)
       return;
     int original_width = stmt->width();
-    stmt->ret_type.width *= vectorize;
-    stmt->ptr.repeat(vectorize);
-    stmt->rebuild_operands();
+    widen_type(stmt->ret_type, vectorize);
+    stmt->src.repeat(vectorize);
     // TODO: this can be buggy
-    int stride = stmt->ptr[original_width - 1].offset + 1;
-    if (stmt->ptr[0].var->width() != 1) {
+    int stride = stmt->src[original_width - 1].offset + 1;
+    if (stmt->src[0].var->width() != 1) {
       for (int i = 0; i < vectorize; i++) {
         for (int j = 0; j < original_width; j++) {
-          stmt->ptr[i * original_width + j].offset += i * stride;
+          stmt->src[i * original_width + j].offset += i * stride;
         }
       }
     }
-    if (loop_var && stmt->same_source() && stmt->ptr[0].var == loop_var) {
+    if (loop_var && stmt->same_source() && stmt->src[0].var == loop_var) {
       // insert_before_me
       LaneAttribute<TypedConstant> const_offsets;
       const_offsets.resize(vectorize * original_width);
@@ -98,7 +110,7 @@ class LoopVectorize : public IRVisitor {
       auto offsets = std::make_unique<ConstStmt>(const_offsets);
       auto add_op = std::make_unique<BinaryOpStmt>(BinaryOpType::add, stmt,
                                                    offsets.get());
-      irpass::typecheck(add_op.get());
+      irpass::type_check(add_op.get(), config);
       auto offsets_p = offsets.get();
       stmt->replace_with(add_op.get());
       stmt->insert_after_me(std::move(offsets));
@@ -118,14 +130,17 @@ class LoopVectorize : public IRVisitor {
     auto old_vectorize = for_stmt->vectorize;
     if (for_stmt->vectorize != 1)
       vectorize = for_stmt->vectorize;
-    loop_var = for_stmt->loop_var;
+    // TODO: RangeForStmt::loop_var is deprecated
+    // loop_var = for_stmt->loop_var;
     for_stmt->body->accept(this);
-    loop_var = nullptr;
+    // loop_var = nullptr;
     vectorize = old_vectorize;
   }
 
   void visit(StructForStmt *for_stmt) override {
-    if (for_stmt->loop_vars.empty())
+    // TODO: StructForStmt::loop_var is deprecated
+    return;
+    /*if (for_stmt->loop_vars.empty())
       return;
     auto old_vectorize = for_stmt->vectorize;
     if (for_stmt->vectorize != 1)
@@ -133,23 +148,24 @@ class LoopVectorize : public IRVisitor {
     loop_var = for_stmt->loop_vars.back();
     for_stmt->body->accept(this);
     loop_var = nullptr;
-    vectorize = old_vectorize;
+    vectorize = old_vectorize;*/
   }
 
   void visit(WhileStmt *stmt) override {
     stmt->body->accept(this);
   }
 
-  static void run(IRNode *node) {
-    LoopVectorize inst;
+  static void run(IRNode *node, const CompileConfig &config) {
+    LoopVectorize inst(config);
     node->accept(&inst);
   }
 };
 
 namespace irpass {
 
-void loop_vectorize(IRNode *root) {
-  return LoopVectorize::run(root);
+void loop_vectorize(IRNode *root, const CompileConfig &config) {
+  TI_AUTO_PROF;
+  return LoopVectorize::run(root, config);
 }
 
 }  // namespace irpass

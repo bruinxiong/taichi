@@ -3,23 +3,32 @@
     The use of this software is governed by the LICENSE file.
 *******************************************************************************/
 
-#include <taichi/common/task.h>
-#include <taichi/math/math.h>
-#include <taichi/python/exception.h>
-#include <taichi/python/export.h>
-#include <taichi/system/benchmark.h>
-#include <taichi/system/profiler.h>
-#include <taichi/system/memory.h>
-#include <taichi/system/unit_dll.h>
-#include <taichi/visual/texture.h>
-#include <taichi/geometry/factory.h>
-#if defined(TLANG_WITH_CUDA)
-#include <cuda_runtime_api.h>
+#include "taichi/backends/metal/api.h"
+#include "taichi/backends/opengl/opengl_api.h"
+#include "taichi/common/core.h"
+#include "taichi/common/interface.h"
+#include "taichi/common/task.h"
+#include "taichi/math/math.h"
+#include "taichi/platform/cuda/detect_cuda.h"
+#include "taichi/program/py_print_buffer.h"
+#include "taichi/python/exception.h"
+#include "taichi/python/export.h"
+#include "taichi/python/memory_usage_monitor.h"
+#include "taichi/system/benchmark.h"
+#include "taichi/system/dynamic_loader.h"
+#include "taichi/system/profiler.h"
+#include "taichi/util/statistics.h"
+#if defined(TI_WITH_CUDA)
+#include "taichi/backends/cuda/cuda_driver.h"
 #endif
 
-TC_NAMESPACE_BEGIN
+#ifdef TI_WITH_CC
+namespace taichi::lang::cccp {
+extern bool is_c_backend_available();
+}
+#endif
 
-extern Function11 python_at_exit;
+TI_NAMESPACE_BEGIN
 
 Config config_from_py_dict(py::dict &c) {
   Config config;
@@ -64,35 +73,20 @@ stdout = fdopen(fd[1], "w");
 auto file_fd = fdopen(fd[0], "w");
 FILE *file = freopen(fn.c_str(), "w", file_fd);
 */
-#if defined(TC_PLATFORM_UNIX)
+#if defined(TI_PLATFORM_UNIX)
   std::cerr.rdbuf(std::cout.rdbuf());
   dup2(fileno(popen(fmt::format("tee {}", fn).c_str(), "w")), STDOUT_FILENO);
 #else
-  TC_NOT_IMPLEMENTED;
+  TI_NOT_IMPLEMENTED;
 #endif
 }
 
 void stop_duplicating_stdout_to_file(const std::string &fn) {
-  TC_NOT_IMPLEMENTED;
-}
-
-std::string cuda_version() {
-#if defined(TLANG_WITH_CUDA)
-  return TLANG_CUDA_VERSION;
-#else
-  return "0.0";
-#endif
-}
-
-bool with_cuda() {
-#if defined(TLANG_WITH_CUDA)
-  return true;
-#else
-  return false;
-#endif
+  TI_NOT_IMPLEMENTED;
 }
 
 void export_misc(py::module &m) {
+  py::class_<Config>(m, "Config");
   py::register_exception_translator([](std::exception_ptr p) {
     try {
       if (p)
@@ -113,50 +107,52 @@ void export_misc(py::module &m) {
       .def("test", &Benchmark::test)
       .def("initialize", &Benchmark::initialize);
 
-  py::class_<UnitDLL, std::shared_ptr<UnitDLL>>(m, "UnitDLL")
-      .def("open_dll", &UnitDLL::open_dll)
-      .def("close_dll", &UnitDLL::close_dll)
-      .def("loaded", &UnitDLL::loaded);
+#define TI_EXPORT_LOGGING(X)               \
+  m.def(#X, [](const std::string &msg) {   \
+    taichi::Logger::get_instance().X(msg); \
+  });
 
-#define TC_EXPORT_LOGGING(X) \
-  m.def(#X, [](const std::string &msg) { taichi::logger.X(msg); });
+  m.def("flush_log", []() { taichi::Logger::get_instance().flush(); });
 
-  m.def("flush_log", []() { taichi::logger.flush(); });
-
-  TC_EXPORT_LOGGING(trace);
-  TC_EXPORT_LOGGING(debug);
-  TC_EXPORT_LOGGING(info);
-  TC_EXPORT_LOGGING(warn);
-  TC_EXPORT_LOGGING(error);
-  TC_EXPORT_LOGGING(critical);
+  TI_EXPORT_LOGGING(trace);
+  TI_EXPORT_LOGGING(debug);
+  TI_EXPORT_LOGGING(info);
+  TI_EXPORT_LOGGING(warn);
+  TI_EXPORT_LOGGING(error);
+  TI_EXPORT_LOGGING(critical);
 
   m.def("duplicate_stdout_to_file", duplicate_stdout_to_file);
 
   m.def("print_all_units", print_all_units);
   m.def("set_core_state_python_imported", CoreState::set_python_imported);
-  m.def("set_core_debug", CoreState::set_debug);
-  m.def("set_logging_level",
-        [](const std::string &level) { logger.set_level(level); });
+  m.def("set_logging_level", [](const std::string &level) {
+    Logger::get_instance().set_level(level);
+  });
+  m.def("logging_effective", [](const std::string &level) {
+    return Logger::get_instance().is_level_effective(level);
+  });
+  m.def("set_logging_level_default",
+        []() { Logger::get_instance().set_level_default(); });
   m.def("set_core_trigger_gdb_when_crash",
         CoreState::set_trigger_gdb_when_crash);
   m.def("test_raise_error", test_raise_error);
   m.def("config_from_dict", config_from_py_dict);
   m.def("get_default_float_size", []() { return sizeof(real); });
-  m.def("register_at_exit",
-        [&](uint64 ptr) { python_at_exit = *(Function11 *)(ptr); });
   m.def("trigger_sig_fpe", []() {
     int a = 2;
     a -= 2;
     return 1 / a;
   });
-  // m.def("dict_from_config", py_dict_from_py_config);
-  m.def("print_profile_info", [&]() { print_profile_info(); });
+  m.def("print_profile_info",
+        [&]() { Profiling::get_instance().print_profile_info(); });
+  m.def("clear_profile_info",
+        [&]() { Profiling::get_instance().clear_profile_info(); });
   m.def("start_memory_monitoring", start_memory_monitoring);
   m.def("absolute_path", absolute_path);
   m.def("get_repo_dir", get_repo_dir);
   m.def("get_python_package_dir", get_python_package_dir);
   m.def("set_python_package_dir", set_python_package_dir);
-  m.def("cuda_version", cuda_version);
+  m.def("cuda_version", get_cuda_version_string);
   m.def("test_cpp_exception", [] {
     try {
       throw std::exception();
@@ -165,7 +161,25 @@ void export_misc(py::module &m) {
     }
     printf("test was successful.\n");
   });
-  m.def("with_cuda", with_cuda);
+  m.def("pop_python_print_buffer", []() { return py_cout.pop_content(); });
+  m.def("toggle_python_print_buffer", [](bool opt) { py_cout.enabled = opt; });
+  m.def("with_cuda", is_cuda_api_available);
+  m.def("with_metal", taichi::lang::metal::is_metal_api_available);
+  m.def("with_opengl", taichi::lang::opengl::is_opengl_api_available);
+
+#ifdef TI_WITH_CC
+  m.def("with_cc", taichi::lang::cccp::is_c_backend_available);
+#else
+  m.def("with_cc", []() { return false; });
+#endif
+
+  py::class_<Statistics>(m, "Statistics")
+      .def(py::init<>())
+      .def("clear", &Statistics::clear)
+      .def("get_counters", &Statistics::get_counters);
+  m.def(
+      "get_kernel_stats", []() -> Statistics & { return stat; },
+      py::return_value_policy::reference);
 }
 
-TC_NAMESPACE_END
+TI_NAMESPACE_END

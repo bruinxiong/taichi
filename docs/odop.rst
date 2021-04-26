@@ -1,5 +1,5 @@
 Objective data-oriented programming
-====================================================
+===================================
 
 Taichi is a `data-oriented <https://en.wikipedia.org/wiki/Data-oriented_design>`_ programming (DOP) language. However, simple DOP makes modularization hard.
 
@@ -13,49 +13,46 @@ A brief example:
 
 .. code-block:: python
 
+  import taichi as ti
+
+  ti.init()
+
   @ti.data_oriented
   class Array2D:
     def __init__(self, n, m, increment):
       self.n = n
       self.m = m
-      self.val = ti.var(ti.f32)
-      self.total = ti.var(ti.f32)
+      self.val = ti.field(ti.f32)
+      self.total = ti.field(ti.f32)
       self.increment = increment
+      ti.root.dense(ti.ij, (self.n, self.m)).place(self.val)
+      ti.root.place(self.total)
 
     @staticmethod
     @ti.func
     def clamp(x):  # Clamp to [0, 1)
         return max(0, min(1 - 1e-6, x))
 
-    def place(self, root):
-      root.dense(ti.ij, (self.n, self.m)).place(self.val)
-      root.place(self.total)
-
-    @ti.classkernel
+    @ti.kernel
     def inc(self):
       for i, j in self.val:
         ti.atomic_add(self.val[i, j], self.increment)
 
-    @ti.classkernel
+    @ti.kernel
     def inc2(self, increment: ti.i32):
       for i, j in self.val:
         ti.atomic_add(self.val[i, j], increment)
 
-    @ti.classkernel
+    @ti.kernel
     def reduce(self):
       for i, j in self.val:
         ti.atomic_add(self.total, self.val[i, j] * 4)
 
   arr = Array2D(128, 128, 3)
 
-  double_total = ti.var(ti.f32)
+  double_total = ti.field(ti.f32, shape=())
 
-  @ti.layout
-  def place():
-    ti.root.place(
-        arr)  # Place an object. Make sure you defined place for that obj
-    ti.root.place(double_total)
-    ti.root.lazy_grad()
+  ti.root.lazy_grad()
 
   arr.inc()
   arr.inc.grad()
@@ -81,5 +78,3 @@ A brief example:
   for i in range(arr.n):
     for j in range(arr.m):
       assert arr.val.grad[i, j] == 8
-
-

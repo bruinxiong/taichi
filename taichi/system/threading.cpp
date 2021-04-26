@@ -3,42 +3,39 @@
     The use of this software is governed by the LICENSE file.
 *******************************************************************************/
 
-#include <algorithm>
-#include <condition_variable>
-#include <taichi/system/threading.h>
-#include <thread>
-#include <vector>
-#if defined(TC_PLATFORM_WINDOWS)
-#include <windows.h>
+#include "taichi/system/threading.h"
+
+#if defined(TI_PLATFORM_WINDOWS)
+#include "taichi/platform/windows/windows.h"
 #else
 // Mac and Linux
 #include "threading.h"
 #include <unistd.h>
-
 #endif
 
-TC_NAMESPACE_BEGIN
+#include <algorithm>
+#include <condition_variable>
+#include <thread>
+#include <vector>
 
-#if defined(min)
-#undef min
-#endif
+TI_NAMESPACE_BEGIN
 
 bool test_threading() {
-  auto tp = ThreadPool();
+  auto tp = ThreadPool(20);
   for (int j = 0; j < 100; j++) {
-    tp.run(10, j + 1, &j, [](void *j, int i) {
+    tp.run(10, j + 1, &j, [](void *j, int _thread_id, int i) {
       double ret = 0.0;
       for (int t = 0; t < 10000000; t++) {
         ret += t * 1e-20;
       }
-      TC_P(int(i + ret + 10 * *(int *)j));
+      TI_P(int(i + ret + 10 * *(int *)j));
     });
   }
   return true;
 }
 
 int PID::get_pid() {
-#if defined(TC_PLATFORM_WINDOWS)
+#if defined(TI_PLATFORM_WINDOWS)
   return (int)GetCurrentProcessId();
 #else
   return (int)getpid();
@@ -46,23 +43,23 @@ int PID::get_pid() {
 }
 
 int PID::get_parent_pid() {
-#if defined(TC_PLATFORM_WINDOWS)
-  TC_NOT_IMPLEMENTED
+#if defined(TI_PLATFORM_WINDOWS)
+  TI_NOT_IMPLEMENTED
   return -1;
 #else
   return (int)getppid();
 #endif
 }
 
-ThreadPool::ThreadPool() {
+ThreadPool::ThreadPool(int max_num_threads) : max_num_threads(max_num_threads) {
   exiting = false;
   started = false;
   running_threads = 0;
-  timestamp = 0;
+  timestamp = 1;
+  last_finished = 0;
   task_head = 0;
   task_tail = 0;
   thread_counter = 0;
-  max_num_threads = std::thread::hardware_concurrency();
   threads.resize((std::size_t)max_num_threads);
   for (int i = 0; i < max_num_threads; i++) {
     threads[i] = std::thread([this] { this->target(); });
@@ -71,19 +68,20 @@ ThreadPool::ThreadPool() {
 
 void ThreadPool::run(int splits,
                      int desired_num_threads,
-                     void *context,
-                     CPUTaskFunc *func) {
+                     void *range_for_task_context,
+                     RangeForTaskFunc *func) {
   {
     std::lock_guard _(mutex);
-    this->context = context;
+    this->range_for_task_context = range_for_task_context;
     this->func = func;
     this->desired_num_threads = std::min(desired_num_threads, max_num_threads);
-    TC_ASSERT(this->desired_num_threads > 0);
-    // TC_P(this->desired_num_threads);
+    TI_ASSERT(this->desired_num_threads > 0);
+    // TI_P(this->desired_num_threads);
     started = false;
     task_head = 0;
     task_tail = splits;
     timestamp++;
+    TI_ASSERT(timestamp < (1LL << 62));  // avoid overflowing here
   }
 
   // wake up all slaves
@@ -91,11 +89,9 @@ void ThreadPool::run(int splits,
   {
     std::unique_lock<std::mutex> lock(mutex);
     // TODO: the workers may have finished before master waiting on master_cv
-    master_cv.wait(lock, [this] {
-      return started && running_threads == 0;
-    });
+    master_cv.wait(lock, [this] { return started && running_threads == 0; });
   }
-  TC_ASSERT(task_head == task_tail);
+  TI_ASSERT(task_head >= task_tail);
 }
 
 void ThreadPool::target() {
@@ -117,8 +113,15 @@ void ThreadPool::target() {
       if (exiting) {
         break;
       } else {
-        started = true;
-        running_threads++;
+        if (last_finished >= last_timestamp) {
+          continue;
+          // This could happen when part of the desired threads wake up and
+          // finish all the task, and then this thread wake up finding nothing
+          // to do. Should skip this task directly.
+        } else {
+          started = true;
+          running_threads++;
+        }
       }
     }
 
@@ -126,21 +129,22 @@ void ThreadPool::target() {
       // For a single parallel task
       int task_id;
       {
-        std::lock_guard<std::mutex> lock(mutex);
-        task_id = task_head;
+        task_id = task_head.fetch_add(1, std::memory_order_relaxed);
         if (task_id >= task_tail)
           break;
-        task_head++;
       }
-      func(context, task_id);
+
+      func(this->range_for_task_context, thread_id, task_id);
     }
 
     bool all_finished = false;
     {
       std::lock_guard<std::mutex> lock(mutex);
       running_threads--;
-      if (running_threads == 0)
+      if (running_threads == 0) {
         all_finished = true;
+        last_finished = last_timestamp;
+      }
     }
     if (all_finished)
       master_cv.notify_one();
@@ -157,4 +161,4 @@ ThreadPool::~ThreadPool() {
     th.join();
 }
 
-TC_NAMESPACE_END
+TI_NAMESPACE_END

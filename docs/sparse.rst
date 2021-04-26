@@ -1,7 +1,7 @@
 .. _sparse:
 
-Sparse computation
-===============================================
+Sparse computation (WIP)
+========================
 
 .. warning::
 

@@ -13,26 +13,64 @@
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
 import os
-import sys
-# sys.path.insert(0, os.path.abspath('.'))
+import re
+from functools import partial
+from pathlib import Path
+from typing import Callable, Match, Tuple, Union
 
+
+# -- Version forge -----------------------------------------------------------
+def _semver_matcher() -> Callable:
+    """Return a func performs regex matching for semantic versions.
+       The regex uses word_boundry and is sensitive to the changes
+       to the contents of the CMakeLists.txt file. The match should
+       have 3 matched groups:
+       1. `SET(TI_VERSION_MAJOR `
+       2. the corresponding version number
+       3. `)`
+    """
+    return lambda s, w: re.search(rf"(\bSET\(TI_VERSION_{w} )(\d+)(\b\))", s)
+
+
+def _intify_version(v: Match) -> int:
+    """Convert matched group v to integer."""
+    return int(v.group(2))
+
+
+def parse_semver(
+    cmakelist_path: str,
+    return_match_groups: bool = False
+) -> Union[Tuple[int, int, int], Tuple[Match[str], Match[str], Match[str]]]:
+    """Parse and return the major, minor and patch version numbers
+       (or matched groups) from CMakeLists.txt given CMAKELIST_PATH.
+    """
+    with open(cmakelist_path, "r") as fp:
+        cmakelist = fp.read()
+    matcher = partial(_semver_matcher(), cmakelist)
+    major, minor, patch = map(matcher, ["MAJOR", "MINOR", "PATCH"])
+    if return_match_groups:
+        return major, minor, patch
+    return tuple(map(_intify_version, (major, minor, patch)))
+
+
+# CMakeLists.txt is the only source of the truth when forging
+# the version, this script always reads from it and parses the version
+cmake_file = Path(__file__).resolve().parents[1].joinpath('CMakeLists.txt')
+major, minor, patch = parse_semver(cmakelist_path=str(cmake_file))
+version_file = Path(__file__).resolve().parent.joinpath("version")
+taichi_version = f"{major}.{minor}.{patch}"
+print('Building doc version', taichi_version)
 
 # -- Project information -----------------------------------------------------
 
 project = 'taichi'
-copyright = '2018, Yuanming Hu'
-author = 'Yuanming Hu'
-
-version_fn = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'version')
-with open(version_fn) as f:
-  taichi_version = f.readline().strip()
-  print('Building doc version', taichi_version)
+copyright = '2020, Taichi Developers'
+author = 'Taichi Developers'
 
 # The short X.Y version
 version = taichi_version
 # The full version, including alpha/beta/rc tags
 release = taichi_version
-
 
 # -- General configuration ---------------------------------------------------
 
@@ -82,7 +120,6 @@ exclude_patterns = []
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = 'sphinx'
 
-
 # -- Options for HTML output -------------------------------------------------
 
 # The theme to use for HTML and HTML Help pages.  See the documentation for
@@ -102,12 +139,12 @@ html_theme = 'sphinx_rtd_theme'
 html_static_path = ['_static']
 
 if os.environ.get('READTHEDOCS', '') != '':
-  css_files = [
-    '//media.readthedocs.org/css/sphinx_rtd_theme.css',
-    '//media.readthedocs.org/css/readthedocs-doc-embed.css'
-  ]
+    css_files = [
+        '//media.readthedocs.org/css/sphinx_rtd_theme.css',
+        '//media.readthedocs.org/css/readthedocs-doc-embed.css'
+    ]
 else:
-  css_files = []
+    css_files = []
 
 html_context = {'css_files': css_files + ['_static/extra.css']}
 
@@ -121,12 +158,10 @@ html_context = {'css_files': css_files + ['_static/extra.css']}
 #
 # html_sidebars = {}
 
-
 # -- Options for HTMLHelp output ---------------------------------------------
 
 # Output file base name for HTML help builder.
 htmlhelp_basename = 'taichidoc'
-
 
 # -- Options for LaTeX output ------------------------------------------------
 
@@ -152,20 +187,15 @@ latex_elements = {
 # (source start file, target name, title,
 #  author, documentclass [howto, manual, or own class]).
 latex_documents = [
-    (master_doc, 'taichi.tex', 'taichi Documentation',
-     'Yuanming Hu', 'manual'),
+    (master_doc, 'taichi.tex', 'taichi Documentation', 'Taichi Developers',
+     'manual'),
 ]
-
 
 # -- Options for manual page output ------------------------------------------
 
 # One entry per manual page. List of tuples
 # (source start file, name, description, authors, manual section).
-man_pages = [
-    (master_doc, 'taichi', 'taichi Documentation',
-     [author], 1)
-]
-
+man_pages = [(master_doc, 'taichi', 'taichi Documentation', [author], 1)]
 
 # -- Options for Texinfo output ----------------------------------------------
 
@@ -173,11 +203,9 @@ man_pages = [
 # (source start file, target name, title, author,
 #  dir menu entry, description, category)
 texinfo_documents = [
-    (master_doc, 'taichi', 'taichi Documentation',
-     author, 'taichi', 'One line description of project.',
-     'Miscellaneous'),
+    (master_doc, 'taichi', 'taichi Documentation', author, 'taichi',
+     'One line description of project.', 'Miscellaneous'),
 ]
-
 
 # -- Extension configuration -------------------------------------------------
 

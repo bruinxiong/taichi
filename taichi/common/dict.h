@@ -14,15 +14,14 @@
 #include <sstream>
 #include <typeinfo>
 
-#include <taichi/math/math.h>
-#include "util.h"
-#include "asset_manager.h"
+#include "taichi/common/core.h"
+#include "taichi/math/math.h"
 
-TC_NAMESPACE_BEGIN
+TI_NAMESPACE_BEGIN
 
 // Declare and then load
 // Load to `this`
-#define TC_LOAD_CONFIG(name, default_val) \
+#define TI_LOAD_CONFIG(name, default_val) \
   this->name = config.get(#name, default_val)
 
 class Dict {
@@ -30,7 +29,7 @@ class Dict {
   std::map<std::string, std::string> data;
 
  public:
-  TC_IO_DEF(data);
+  TI_IO_DEF(data);
 
   Dict() = default;
 
@@ -74,7 +73,7 @@ class Dict {
 
   void check_string_integral(const std::string &str) const {
     if (!is_string_integral(str)) {
-      TC_ERROR(
+      TI_ERROR(
           "Getting integral value out of non-integral string '{}' is not "
           "allowed.",
           str);
@@ -177,8 +176,8 @@ class Dict {
     int64 ptr_ll;
     std::getline(ss, t, '\t');
     ss >> ptr_ll;
-    assert_info(t == typeid(T).name(),
-                "Pointer type mismatch: " + t + " and " + typeid(T).name());
+    TI_ASSERT_INFO(t == typeid(T).name(),
+                   "Pointer type mismatch: " + t + " and " + typeid(T).name());
     return reinterpret_cast<T *>(ptr_ll);
   }
 
@@ -201,12 +200,6 @@ class Dict {
     } else {
       return default_value;
     }
-  }
-
-  template <typename T>
-  std::shared_ptr<T> get_asset(std::string key) const {
-    int id = get<int>(key);
-    return AssetManager::get_asset<T>(id);
   }
 
   template <typename T>
@@ -281,7 +274,7 @@ class Dict {
 
   std::string get_string(std::string key) const {
     if (data.find(key) == data.end()) {
-      TC_ERROR("No key named '{}' found.", key);
+      TI_ERROR("No key named '{}' found.", key);
     }
     return data.find(key)->second;
   }
@@ -354,10 +347,10 @@ inline bool Dict::get<bool>(std::string key) const {
       {"true", true},   {"True", true},   {"t", true},  {"1", true},
       {"false", false}, {"False", false}, {"f", false}, {"0", false},
   };
-  assert_info(dict.find(s) != dict.end(), "Unkown identifer for bool: " + s);
+  TI_ASSERT_INFO(dict.find(s) != dict.end(), "Unkown identifer for bool: " + s);
   return dict[s];
 }
 
 using Config = Dict;
 
-TC_NAMESPACE_END
+TI_NAMESPACE_END

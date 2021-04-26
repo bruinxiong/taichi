@@ -1,9 +1,10 @@
-from .util import tc_core, build, format, load_module, start_memory_monitoring, \
-  is_release, package_root
-from .unit import unit
+from taichi.core.logging import *
+from taichi.core.primitive_types import *
+from taichi.core.record import *
+from taichi.core.settings import *
+from taichi.core.util import *
 
-tc_core.build = build
-tc_core.format = format
-tc_core.load_module = load_module
+ti_core.build = build
+ti_core.load_module = load_module
 
-__all__ = [s for s in dir() if not s.startswith('_')] + ['settings']
+__all__ = [s for s in dir() if not s.startswith('_')]

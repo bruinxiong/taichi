@@ -39,10 +39,16 @@ execute_process(COMMAND ${PYTHON_EXECUTABLE} -c
         sys.stdout.write((sysconfig.get_config_var('LIBDIR') or sysconfig.get_python_lib()).replace('\\\\','/'))"
         OUTPUT_VARIABLE PYTHON_LIBRARY_DIR)
 
+
+execute_process(COMMAND ${PYTHON_EXECUTABLE} -c
+        "import sys;\
+        sys.stdout.write(str(sys.version_info[1]))"
+        OUTPUT_VARIABLE PYTHON_MINOR_VERSION)
+
 if (WIN32)
   link_directories(${PYTHON_LIBRARY_DIR}/../../libs)
   set(PYTHON_LIBRARIES ${PYTHON_LIBRARY_DIR}/../../libs/python3.lib)
-  set(PYTHON_LIBRARIES ${PYTHON_LIBRARY_DIR}/../../libs/python36.lib)
+  set(PYTHON_LIBRARIES ${PYTHON_LIBRARY_DIR}/../../libs/python3${PYTHON_MINOR_VERSION}.lib)
 else()
   find_library(PYTHON_LIBRARY NAMES python${PYTHON_VERSION} python${PYTHON_VERSION}m PATHS ${PYTHON_LIBRARY_DIR}
           NO_DEFAULT_PATH NO_SYSTEM_ENVIRONMENT_PATH PATH_SUFFIXES x86_64-linux-gnu)
@@ -52,9 +58,7 @@ endif()
 # Creating python enters
 file(MAKE_DIRECTORY bin)
 file(WRITE ${CMAKE_SOURCE_DIR}/bin/ti "#!${PYTHON_EXECUTABLE_PATH}\nimport taichi\nexit(taichi.main())")
-file(WRITE ${CMAKE_SOURCE_DIR}/bin/tid "#!${PYTHON_EXECUTABLE_PATH}\nimport taichi\nexit(taichi.main(debug=True))")
 execute_process(COMMAND chmod +x ${CMAKE_SOURCE_DIR}/bin/ti)
-execute_process(COMMAND chmod +x ${CMAKE_SOURCE_DIR}/bin/tid)
 execute_process(COMMAND cp ${CMAKE_SOURCE_DIR}/bin/ti ${CMAKE_SOURCE_DIR}/bin/taichi)
 
 
@@ -83,4 +87,3 @@ else ()
 endif ()
 
 include_directories(${PYBIND11_INCLUDE_DIR})
-

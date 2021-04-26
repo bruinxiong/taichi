@@ -1,7 +1,6 @@
 #include <cmath>
-#include <immintrin.h>
 #include <algorithm>
-#include <taichi/common/util.h>
+#include "taichi/common/core.h"
 
 namespace SifakisSVD {
 
@@ -39,13 +38,8 @@ A. McAdams, A. Selle, R. Tamstorf, J. Teran and E. Sifakis
 // POSSIBILITY OF SUCH DAMAGE.
 //#####################################################################
 
-TC_FORCE_INLINE float rsqrt(const float f) {
-  float buf[4];
-  buf[0] = f;
-  __m128 v = _mm_loadu_ps(buf);
-  v = _mm_rsqrt_ss(v);
-  _mm_storeu_ps(buf, v);
-  return buf[0];
+TI_FORCE_INLINE float rsqrt(const float f) {
+  return 1.0f / std::sqrt(f);
 }
 
 constexpr float Four_Gamma_Squared = 5.82842712474619f;  // sqrt(8.) + 3.;
@@ -55,7 +49,7 @@ constexpr float Cosine_Pi_Over_Eight =
     0.9238795325112867f;  //.5 * sqrt(2. + sqrt(2.));
 
 template <int sweeps = 4>
-TC_FORCE_INLINE void svd(const float a11,
+TI_FORCE_INLINE void svd(const float a11,
                          const float a12,
                          const float a13,
                          const float a21,
